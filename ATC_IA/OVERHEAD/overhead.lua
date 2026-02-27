@@ -20,7 +20,7 @@ ATC_AI = {
     fuelLow      = 0.20,
     fuelMed      = 0.28,
 
-    patternAGL_ft = 1500,    -- suggested pattern altitude AGL (Academy uses 1500 too)
+    patternAGL_ft = 1500,    -- suggested pattern altitude AGL
     overheadInitialNM = 5,   -- "hold/report initial"
   },
 
@@ -128,20 +128,17 @@ local function getAirbasePointAndElev()
 end
 
 local function computeActiveRunway07_25()
-  -- Determine runway based on surface wind direction at airbase.
-  -- Wind vector from atmosphere.getWind() is "to" direction; we convert to "from".
   local p, elev = getAirbasePointAndElev()
   if not p then return ATC_AI.state.activeRWY or "07" end
 
   local w = atmosphere.getWind({x=p.x, y=elev + 10, z=p.z})
   local wx, wz = w.x or 0, w.z or 0
 
-  -- calm -> keep previous
   if math.abs(wx) < 0.5 and math.abs(wz) < 0.5 then
     return ATC_AI.state.activeRWY or "07"
   end
 
-  local toRad = math.atan2(wx, wz) -- x east, z north
+  local toRad = math.atan2(wx, wz)
   local toDeg = (math.deg(toRad) + 360) % 360
   local fromDeg = (toDeg + 180) % 360
 
@@ -150,8 +147,8 @@ local function computeActiveRunway07_25()
     return (d > 180) and (360-d) or d
   end
 
-  local d07 = angDiff(fromDeg, 70)   -- RWY 07 ~ 070
-  local d25 = angDiff(fromDeg, 250)  -- RWY 25 ~ 250
+  local d07 = angDiff(fromDeg, 70)
+  local d25 = angDiff(fromDeg, 250)
 
   return (d07 <= d25) and "07" or "25"
 end
@@ -166,7 +163,6 @@ local function computePriority(u, isEmergency)
   elseif fuel < ATC_AI.cfg.fuelMed then p = 3
   else p = 2 end
 
-  -- damage heuristic
   local desc = u:getDesc()
   if desc and desc.life and u:getLife() and u:getLife() < 0.6 * desc.life then
     p = math.max(p, 5)
@@ -441,19 +437,20 @@ ATC_AI.academy = {
   -- Overhead gate (1500 AGL target with +/-100ft window)
   overhead = { distNM_min = 4.0, distNM_max = 6.0, hdg_tol = 20, agl_min = 1400, agl_max = 1600 },
 
-  -- Downwind spacing heuristic + speed gate
-  downwind = { maxNM = 2.0, minNM = 0.6 },
+  -- Downwind REAL (side+spacing) + speed gate
+  downwind = {
+    minNM = 0.6,
+    maxNM = 2.0,
+    sideLockSeconds = 20,
+    abeamFracMin = 0.45,
+    abeamFracMax = 0.85
+  },
   downwindSpeed = { min = 200, max = 250 },
-
-  -- Final stability (kept simple/robust)
-  final = { hdg_tol = 10, agl_max = 650, minSecondsStable = 6 },
 
   -- Initial speed policy
   initial = { target = 300, fast = 320, slow = 260 },
   penalties = {
-    -- bands: {lo, hi, points}
     initialFast = { {320,339,5}, {340,359,10}, {360,999,15} },
-    -- (optional) if you later want slow penalty, set this to a number
     initialSlow = nil
   },
 
@@ -465,10 +462,10 @@ ATC_AI.academy = {
     hdgTol = 25
   },
 
-  -- Break rules: valid from 50% to 102% (late margin +2%)
+  -- Break rules: valid from 50% to 102% (late margin +2%) + level break penalty per 100ft
   breakRules = {
     minFrac = 0.50,
-    maxFrac = 1.00,     -- base (we apply +0.02 late margin in code)
+    maxFrac = 1.00,
     corridorM = 180,
     turnHdgDelta = 25,
     alignTol = 15,
@@ -476,17 +473,54 @@ ATC_AI.academy = {
     penaltyLate  = 10,
 
     targetAGL_ft = 1500,
-    penaltyPer100ft = 2,  -- points per 100ft difference
-    maxAltPenalty = 30
+    penaltyPer100ft = 2,
+    maxAltPenalty = 30,
+
+    minDropBy180_ft = 200, -- descent progressive check at 180
+    noDescentPenalty = 10
+  },
+
+  -- 180/90/FINAL system
+  final = {
+    hdg_tol = 8,
+    centerlineMaxM = 120,
+    agl_max = 650,
+    minSecondsStable = 6,
+  },
+
+  base = {
+    hdg90_tol = 20,
+    minTurnRateDeg = 2,
+    posMinFactor = 0.30,
+    posMaxFactor = 0.80
+  },
+
+  -- Penalties
+  finalPenalties = {
+    overshootM = 250,
+    overshootPenalty = 10,
+    overshootBigM = 400,
+    overshootBigPenalty = 20
+  },
+
+  bankRules = {
+    maxBank90 = 60,
+    penaltyPer5deg = 2,
+    maxPenalty = 20
+  },
+
+  flatPatternRules = {
+    at90_maxAGL_ft  = 900,
+    penaltyPer100ft = 2,
+    maxPenalty = 20
   },
 
   -- Score weights (sum 100)
   weights = { overhead = 25, breakEvt = 20, downwind = 20, final = 35 },
 
-  students = {}, -- unitName -> state
-  lastFeedback = {}, -- unitName -> lastFeedbackTime
+  students = {},
+  lastFeedback = {},
 
-  -- internal cached points/geometry
   _thr07 = nil,
   _thr25 = nil,
   _rwy = nil
@@ -531,6 +565,10 @@ local function _ensureStudent(name)
       finalStable = false,
       landed = false,
 
+      -- phase markers
+      at180 = false,
+      at90 = false,
+
       finalStableSeconds = 0,
 
       score = 0,
@@ -541,7 +579,18 @@ local function _ensureStudent(name)
       initialFastPenalizedThisRecovery = false,
       breakPenalizedThisRecovery = false,
       breakAltPenalizedThisRecovery = false,
+      overshootPenalizedThisRecovery = false,
+      bankPenalizedThisRecovery = false,
+      descentPenalizedThisRecovery = false,
+      flatPenalizedThisRecovery = false,
+
       wasAlignedOnRunway = false,
+      breakTime = nil,
+      breakAGL_ft = nil,
+
+      patternSide = nil,   -- "L" or "R"
+      prevTrack = nil,
+      prevLatAbsM = nil,
     }
   end
   return ATC_AI.academy.students[name]
@@ -559,6 +608,30 @@ local function _throttledFeedback(unit, unitName, text, minGap)
     msgToUnit(unit, "[ACADEMY] " .. text, 5)
     ATC_AI.academy.lastFeedback[unitName] = t
   end
+end
+
+local function _turnRateDeg(prev, current)
+  if not prev then return 0 end
+  local d = (current - prev + 540) % 360 - 180
+  return d
+end
+
+local function _bankDeg(unit)
+  local p = unit:getPosition()
+  if not p or not p.x or not p.y then return 0 end
+  local roll = math.deg(math.atan2(p.x.y or 0, p.y.y or 1))
+  return math.abs(roll)
+end
+
+local function _runwayDirVector(rwyHdgDeg)
+  local rad = math.rad(rwyHdgDeg)
+  return { x = math.sin(rad), z = math.cos(rad) }
+end
+
+local function _signedLateralMeters(pos, startP, dir)
+  local dx = pos.x - startP.x
+  local dz = pos.z - startP.z
+  return (dir.x * dz - dir.z * dx)
 end
 
 local function _LLtoPoint(lat, lon)
@@ -595,8 +668,7 @@ local function _initThresholdPoints()
     ATC_AI.academy._rwy = {
       a = a, b = b,
       vx = vx, vz = vz,
-      len = len,
-      mid = { x = (a.x + b.x)/2, z = (a.z + b.z)/2 }
+      len = len
     }
     env.info(string.format("[ATC_AI][ACADEMY] RWY geom OK. len=%.0fm", len))
   end
@@ -666,198 +738,367 @@ local function _academyMonitor()
     if u and u:isExist() then
       local name = u:getName()
       local s = _ensureStudent(name)
-      if s.landed then goto continue end
 
-      local pos = u:getPoint()
+      -- DCS Lua 5.1: no goto. Envolvemos.
+      if not s.landed then
+        local pos = u:getPoint()
+        local groundHere = land.getHeight({x=pos.x, y=pos.z}) or abElev
+        local agl_ft = (pos.y - groundHere) * 3.28084
 
-      -- AGL (local ground under aircraft for break-level requirement)
-      local groundHere = land.getHeight({x=pos.x, y=pos.z}) or abElev
-      local agl_ft = (pos.y - groundHere) * 3.28084
+        local vel = u:getVelocity()
+        local gs_kts = _ktsFromMps(math.sqrt(vel.x^2 + vel.z^2))
+        local trk = _getTrackDegFromVelocity(vel)
 
-      local vel = u:getVelocity()
-      local gs_kts = _ktsFromMps(math.sqrt(vel.x^2 + vel.z^2))
-      local trk = _getTrackDegFromVelocity(vel)
+        local distNM = _nmFromMeters(_distance2D(pos, abPoint))
 
-      local distNM = _nmFromMeters(_distance2D(pos, abPoint))
+        -- ===== Initial gate (arms a new recovery) =====
+        local inInitialGate = (distNM >= ATC_AI.academy.overhead.distNM_min and distNM <= ATC_AI.academy.overhead.distNM_max)
+                              and (_degDiff(trk, rwyHdg) <= ATC_AI.academy.overhead.hdg_tol)
 
-      -- ===== Initial gate (arms a new recovery) =====
-      local inInitialGate = (distNM >= ATC_AI.academy.overhead.distNM_min and distNM <= ATC_AI.academy.overhead.distNM_max)
-                            and (_degDiff(trk, rwyHdg) <= ATC_AI.academy.overhead.hdg_tol)
+        if inInitialGate and not s.recoveryArmed then
+          s.recoveryArmed = true
+          s.initialFastPenalizedThisRecovery = false
+          s.breakPenalizedThisRecovery = false
+          s.breakAltPenalizedThisRecovery = false
+          s.overshootPenalizedThisRecovery = false
+          s.bankPenalizedThisRecovery = false
+          s.descentPenalizedThisRecovery = false
+          s.flatPenalizedThisRecovery = false
 
-      if inInitialGate and not s.recoveryArmed then
-        s.recoveryArmed = true
-        s.initialFastPenalizedThisRecovery = false
-        s.breakPenalizedThisRecovery = false
-        s.breakAltPenalizedThisRecovery = false
-        s.wasAlignedOnRunway = false
-      end
-
-      if (not inInitialGate) and s.recoveryArmed then
-        s.recoveryArmed = false
-      end
-
-      -- ===== Overhead window gate (1500 AGL +/-100) =====
-      if not s.overheadOK then
-        local okDist = (distNM >= ATC_AI.academy.overhead.distNM_min and distNM <= ATC_AI.academy.overhead.distNM_max)
-        local okHdg  = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.overhead.hdg_tol)
-        local okAlt  = (agl_ft >= ATC_AI.academy.overhead.agl_min and agl_ft <= ATC_AI.academy.overhead.agl_max)
-
-        if okDist and okHdg and okAlt then
-          s.overheadOK = true
-          s.score = s.score + ATC_AI.academy.weights.overhead
-          _throttledFeedback(u, name, "Overhead OK (1500 AGL)", 2)
-        else
-          if okDist and okHdg and (agl_ft < ATC_AI.academy.overhead.agl_min) then
-            _throttledFeedback(u, name, "Overhead LOW (target 1500 AGL)", 5)
-          elseif okDist and okHdg and (agl_ft > ATC_AI.academy.overhead.agl_max) then
-            _throttledFeedback(u, name, "Overhead HIGH (target 1500 AGL)", 5)
-          end
-        end
-      end
-
-      -- ===== Initial speed callout (informative) =====
-      if inInitialGate and gs_kts >= ATC_AI.academy.initial.fast then
-        _throttledFeedback(u, name, string.format("FAST (Initial %.0f kt, target %d)", gs_kts, ATC_AI.academy.initial.target), 5)
-      end
-
-      -- ===== Threshold FAST penalty (REAL thresholds, only once per recovery) =====
-      local thrPoint = nil
-      if ATC_AI.state.activeRWY == "07" then thrPoint = ATC_AI.academy._thr07 else thrPoint = ATC_AI.academy._thr25 end
-
-      local inThresholdZone = false
-      if thrPoint then
-        local thrDistNM = (_distance2D(pos, thrPoint) / 1852)
-        inThresholdZone = (thrDistNM <= ATC_AI.academy.threshold.zoneNM)
-                          and (_degDiff(trk, rwyHdg) <= ATC_AI.academy.threshold.hdgTol)
-      end
-
-      if inThresholdZone and gs_kts >= ATC_AI.academy.initial.fast then
-        if s.recoveryArmed and (not s.initialFastPenalizedThisRecovery) then
-          local penalty = 5
-          for _,band in ipairs(ATC_AI.academy.penalties.initialFast) do
-            local lo, hi, pts = band[1], band[2], band[3]
-            if gs_kts >= lo and gs_kts <= hi then penalty = pts break end
-          end
-          s.score = math.max(0, s.score - penalty)
-          s.initialFastPenalizedThisRecovery = true
-          _addNote(s, string.format("Threshold fast (-%d)", penalty))
-          msgToUnit(u, string.format("[ACADEMY] Penalty: THRESHOLD FAST (-%d)", penalty), 6)
-        end
-      end
-
-      -- ===== Break detection with runway window (50%..102%) + level break penalty per 100ft =====
-      if s.overheadOK and (not s.breakDone) and ATC_AI.academy._rwy then
-        local r = ATC_AI.academy._rwy
-
-        local startP, vx, vz, len
-        if ATC_AI.state.activeRWY == "07" then
-          startP, vx, vz, len = r.a, r.vx, r.vz, r.len
-        else
-          -- reverse direction
-          startP, vx, vz, len = r.b, -r.vx, -r.vz, r.len
-        end
-
-        local alongM = _projectAlongRunwayMeters(pos, startP, vx, vz, len)
-        local frac = alongM / len
-        local offM = _distToCenterlineMeters(pos, startP, vx, vz, len)
-
-        local inCorridor = (offM <= ATC_AI.academy.breakRules.corridorM)
-        local inRunwaySpan = (frac >= -0.05 and frac <= 1.10)
-
-        local aligned = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.breakRules.alignTol)
-        local turning = (_degDiff(trk, rwyHdg) >= ATC_AI.academy.breakRules.turnHdgDelta)
-
-        if inCorridor and inRunwaySpan then
-          s.wasAlignedOnRunway = s.wasAlignedOnRunway or aligned
-        else
           s.wasAlignedOnRunway = false
+          s.breakTime = nil
+          s.breakAGL_ft = nil
+          s.patternSide = nil
+
+          s.at180 = false
+          s.at90 = false
+          s.finalStable = false
+          s.finalStableSeconds = 0
+          s.prevTrack = nil
+          s.prevLatAbsM = nil
         end
 
-        if s.wasAlignedOnRunway and inCorridor and inRunwaySpan and turning then
-          s.breakDone = true
-          s.score = s.score + ATC_AI.academy.weights.breakEvt
-          _throttledFeedback(u, name, "Break detected", 2)
+        if (not inInitialGate) and s.recoveryArmed then
+          s.recoveryArmed = false
+        end
 
-          -- Window check (late margin +2%)
-          local minF = ATC_AI.academy.breakRules.minFrac
-          local maxF = ATC_AI.academy.breakRules.maxFrac + 0.02
+        -- ===== Overhead window gate (1500 AGL +/-100) =====
+        if not s.overheadOK then
+          local okDist = (distNM >= ATC_AI.academy.overhead.distNM_min and distNM <= ATC_AI.academy.overhead.distNM_max)
+          local okHdg  = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.overhead.hdg_tol)
+          local okAlt  = (agl_ft >= ATC_AI.academy.overhead.agl_min and agl_ft <= ATC_AI.academy.overhead.agl_max)
 
-          if frac < minF and not s.breakPenalizedThisRecovery then
-            local pen = ATC_AI.academy.breakRules.penaltyEarly
-            s.score = math.max(0, s.score - pen)
-            s.breakPenalizedThisRecovery = true
-            _addNote(s, string.format("Break early (%.0f%% RWY, -%d)", frac*100, pen))
-            msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK EARLY (%.0f%%, -%d)", frac*100, pen), 6)
-
-          elseif frac > maxF and not s.breakPenalizedThisRecovery then
-            local pen = ATC_AI.academy.breakRules.penaltyLate
-            s.score = math.max(0, s.score - pen)
-            s.breakPenalizedThisRecovery = true
-            _addNote(s, string.format("Break late (%.0f%% RWY, -%d)", frac*100, pen))
-            msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK LATE (%.0f%%, -%d)", frac*100, pen), 6)
-
+          if okDist and okHdg and okAlt then
+            s.overheadOK = true
+            s.score = s.score + ATC_AI.academy.weights.overhead
+            _throttledFeedback(u, name, "Overhead OK (1500 AGL)", 2)
           else
-            _throttledFeedback(u, name, string.format("Break OK (%.0f%% RWY)", frac*100), 3)
+            if okDist and okHdg and (agl_ft < ATC_AI.academy.overhead.agl_min) then
+              _throttledFeedback(u, name, "Overhead LOW (target 1500 AGL)", 5)
+            elseif okDist and okHdg and (agl_ft > ATC_AI.academy.overhead.agl_max) then
+              _throttledFeedback(u, name, "Overhead HIGH (target 1500 AGL)", 5)
+            end
+          end
+        end
+
+        -- ===== Initial speed callout (informative) =====
+        if inInitialGate and gs_kts >= ATC_AI.academy.initial.fast then
+          _throttledFeedback(u, name, string.format("FAST (Initial %.0f kt, target %d)", gs_kts, ATC_AI.academy.initial.target), 5)
+        end
+
+        -- ===== Threshold FAST penalty (REAL thresholds, only once per recovery) =====
+        local thrPoint = nil
+        if ATC_AI.state.activeRWY == "07" then thrPoint = ATC_AI.academy._thr07 else thrPoint = ATC_AI.academy._thr25 end
+
+        local inThresholdZone = false
+        if thrPoint then
+          local thrDistNM = (_distance2D(pos, thrPoint) / 1852)
+          inThresholdZone = (thrDistNM <= ATC_AI.academy.threshold.zoneNM)
+                            and (_degDiff(trk, rwyHdg) <= ATC_AI.academy.threshold.hdgTol)
+        end
+
+        if inThresholdZone and gs_kts >= ATC_AI.academy.initial.fast then
+          if s.recoveryArmed and (not s.initialFastPenalizedThisRecovery) then
+            local penalty = 5
+            for _,band in ipairs(ATC_AI.academy.penalties.initialFast) do
+              local lo, hi, pts = band[1], band[2], band[3]
+              if gs_kts >= lo and gs_kts <= hi then penalty = pts break end
+            end
+            s.score = math.max(0, s.score - penalty)
+            s.initialFastPenalizedThisRecovery = true
+            _addNote(s, string.format("Threshold fast (-%d)", penalty))
+            msgToUnit(u, string.format("[ACADEMY] Penalty: THRESHOLD FAST (-%d)", penalty), 6)
+          end
+        end
+
+        -- ===== Break detection with runway window (50%..102%) + level break penalty per 100ft =====
+        if s.overheadOK and (not s.breakDone) and ATC_AI.academy._rwy then
+          local r = ATC_AI.academy._rwy
+
+          local startP, vx, vz, len
+          if ATC_AI.state.activeRWY == "07" then
+            startP, vx, vz, len = r.a, r.vx, r.vz, r.len
+          else
+            startP, vx, vz, len = r.b, -r.vx, -r.vz, r.len
           end
 
-          -- Level break altitude penalty (per 100ft) - once per recovery
-          if not s.breakAltPenalizedThisRecovery then
-            local breakAGL_ft = agl_ft
-            local diff = math.abs(breakAGL_ft - ATC_AI.academy.breakRules.targetAGL_ft)
-            local steps = math.floor(diff / 100)
-            local penAlt = steps * ATC_AI.academy.breakRules.penaltyPer100ft
-            penAlt = math.min(penAlt, ATC_AI.academy.breakRules.maxAltPenalty)
+          local alongM = _projectAlongRunwayMeters(pos, startP, vx, vz, len)
+          local frac = alongM / len
+          local offM = _distToCenterlineMeters(pos, startP, vx, vz, len)
 
-            if penAlt > 0 then
-              s.score = math.max(0, s.score - penAlt)
-              _addNote(s, string.format("Break alt %.0fft AGL (-%d)", breakAGL_ft, penAlt))
-              msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK ALT %.0fft (target %d, -%d)",
-                breakAGL_ft, ATC_AI.academy.breakRules.targetAGL_ft, penAlt), 7)
+          local inCorridor = (offM <= ATC_AI.academy.breakRules.corridorM)
+          local inRunwaySpan = (frac >= -0.05 and frac <= 1.10)
+
+          local aligned = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.breakRules.alignTol)
+          local turning = (_degDiff(trk, rwyHdg) >= ATC_AI.academy.breakRules.turnHdgDelta)
+
+          if inCorridor and inRunwaySpan then
+            s.wasAlignedOnRunway = s.wasAlignedOnRunway or aligned
+          else
+            s.wasAlignedOnRunway = false
+          end
+
+          if s.wasAlignedOnRunway and inCorridor and inRunwaySpan and turning then
+            s.breakDone = true
+            s.breakTime = timer.getTime()
+            s.breakAGL_ft = agl_ft
+
+            s.score = s.score + ATC_AI.academy.weights.breakEvt
+            _throttledFeedback(u, name, "Break detected", 2)
+
+            -- Window check (late margin +2%)
+            local minF = ATC_AI.academy.breakRules.minFrac
+            local maxF = ATC_AI.academy.breakRules.maxFrac + 0.02
+
+            if frac < minF and not s.breakPenalizedThisRecovery then
+              local pen = ATC_AI.academy.breakRules.penaltyEarly
+              s.score = math.max(0, s.score - pen)
+              s.breakPenalizedThisRecovery = true
+              _addNote(s, string.format("Break early (%.0f%% RWY, -%d)", frac*100, pen))
+              msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK EARLY (%.0f%%, -%d)", frac*100, pen), 6)
+
+            elseif frac > maxF and not s.breakPenalizedThisRecovery then
+              local pen = ATC_AI.academy.breakRules.penaltyLate
+              s.score = math.max(0, s.score - pen)
+              s.breakPenalizedThisRecovery = true
+              _addNote(s, string.format("Break late (%.0f%% RWY, -%d)", frac*100, pen))
+              msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK LATE (%.0f%%, -%d)", frac*100, pen), 6)
+
+            else
+              _throttledFeedback(u, name, string.format("Break OK (%.0f%% RWY)", frac*100), 3)
             end
 
-            s.breakAltPenalizedThisRecovery = true
+            -- Level break altitude penalty (per 100ft) - once per recovery
+            if not s.breakAltPenalizedThisRecovery then
+              local diff = math.abs(agl_ft - ATC_AI.academy.breakRules.targetAGL_ft)
+              local steps = math.floor(diff / 100)
+              local penAlt = math.min(steps * ATC_AI.academy.breakRules.penaltyPer100ft,
+                                      ATC_AI.academy.breakRules.maxAltPenalty)
+
+              if penAlt > 0 then
+                s.score = math.max(0, s.score - penAlt)
+                _addNote(s, string.format("Break alt %.0fft AGL (-%d)", agl_ft, penAlt))
+                msgToUnit(u, string.format("[ACADEMY] Penalty: BREAK ALT %.0fft (target %d, -%d)",
+                  agl_ft, ATC_AI.academy.breakRules.targetAGL_ft, penAlt), 7)
+              end
+
+              s.breakAltPenalizedThisRecovery = true
+            end
+          end
+        end
+
+        -- ===== Downwind REAL: side + lateral spacing + speed gate =====
+        if s.breakDone and (not s.downwindOK) and ATC_AI.academy._rwy then
+          local r = ATC_AI.academy._rwy
+          local dir = _runwayDirVector(rwyHdg)
+
+          local startP
+          if ATC_AI.state.activeRWY == "07" then startP = r.a else startP = r.b end
+
+          local vx, vz, len
+          if ATC_AI.state.activeRWY == "07" then vx, vz, len = r.vx, r.vz, r.len else vx, vz, len = -r.vx, -r.vz, r.len end
+          local alongM = _projectAlongRunwayMeters(pos, startP, vx, vz, len)
+          local frac = alongM / len
+
+          local latSignedM = _signedLateralMeters(pos, startP, dir)
+          local latNM = math.abs(latSignedM) / 1852
+
+          -- Infer pattern side shortly after break
+          if (not s.patternSide) and s.breakTime and ((timer.getTime() - s.breakTime) <= ATC_AI.academy.downwind.sideLockSeconds) then
+            if math.abs(latSignedM) > 150 then
+              s.patternSide = (latSignedM > 0) and "L" or "R"
+              _throttledFeedback(u, name, "Pattern side locked: " .. s.patternSide, 6)
+            end
+          end
+
+          local abeamOk = (frac >= ATC_AI.academy.downwind.abeamFracMin and frac <= ATC_AI.academy.downwind.abeamFracMax)
+          local spacingOk = (latNM >= ATC_AI.academy.downwind.minNM and latNM <= ATC_AI.academy.downwind.maxNM)
+          local speedOk = (gs_kts >= ATC_AI.academy.downwindSpeed.min and gs_kts <= ATC_AI.academy.downwindSpeed.max)
+
+          local sideOk = true
+          if s.patternSide then
+            local curSide = (latSignedM > 0) and "L" or "R"
+            sideOk = (curSide == s.patternSide)
+          end
+
+          if abeamOk and spacingOk and speedOk and sideOk then
+            s.downwindOK = true
+            s.score = s.score + ATC_AI.academy.weights.downwind
+            _throttledFeedback(u, name, string.format("Downwind OK (%s, %.2fNM, %.0f kt)", tostring(s.patternSide or "?"), latNM, gs_kts), 3)
+          else
+            if abeamOk then
+              if not spacingOk then
+                _throttledFeedback(u, name, string.format("Downwind SPACING %.2fNM (need %.1f–%.1f)", latNM,
+                  ATC_AI.academy.downwind.minNM, ATC_AI.academy.downwind.maxNM), 6)
+              end
+              if not speedOk then
+                _throttledFeedback(u, name, string.format("Downwind SPEED %.0f kt (need %d–%d)", gs_kts,
+                  ATC_AI.academy.downwindSpeed.min, ATC_AI.academy.downwindSpeed.max), 6)
+              end
+              if s.patternSide and not sideOk then
+                _throttledFeedback(u, name, "Wrong side of pattern", 6)
+              end
+            end
+          end
+        end
+
+        -- ===== 180 / 90 / FINAL GEOMETRIC SYSTEM (with penalties) =====
+        if ATC_AI.academy._rwy then
+          local r = ATC_AI.academy._rwy
+
+          local vx, vz, len, startP
+          if ATC_AI.state.activeRWY == "07" then
+            vx, vz, len = r.vx, r.vz, r.len
+            startP = r.a
+          else
+            vx, vz, len = -r.vx, -r.vz, r.len
+            startP = r.b
+          end
+
+          local alongM = _projectAlongRunwayMeters(pos, startP, vx, vz, len)
+          local frac = alongM / len
+
+          local dir = _runwayDirVector(rwyHdg)
+          local latSignedM = _signedLateralMeters(pos, startP, dir)
+          local latAbsM = math.abs(latSignedM)
+          local latNM = latAbsM / 1852
+
+          -- closing detection
+          local closing = false
+          if s.prevLatAbsM then
+            closing = (latAbsM < (s.prevLatAbsM - 10))
+          end
+          s.prevLatAbsM = latAbsM
+
+          -- turn rate
+          local turnRate = _turnRateDeg(s.prevTrack, trk)
+          s.prevTrack = trk
+
+          -- ===== 180 =====
+          if s.downwindOK and (not s.at180) then
+            local abeamOk = (frac >= ATC_AI.academy.downwind.abeamFracMin and frac <= ATC_AI.academy.downwind.abeamFracMax)
+            if abeamOk then
+              s.at180 = true
+              _throttledFeedback(u, name, "180", 3)
+
+              -- Descent progressive check at 180 (once per recovery)
+              if s.recoveryArmed and (not s.descentPenalizedThisRecovery) and s.breakAGL_ft then
+                local drop = s.breakAGL_ft - agl_ft
+                if drop < ATC_AI.academy.breakRules.minDropBy180_ft then
+                  local pen = ATC_AI.academy.breakRules.noDescentPenalty
+                  s.score = math.max(0, s.score - pen)
+                  s.descentPenalizedThisRecovery = true
+                  _addNote(s, string.format("No descent by 180 (-%d)", pen))
+                  msgToUnit(u, string.format("[ACADEMY] Penalty: NO DESCENT by 180 (drop %.0fft, -%d)", drop, pen), 7)
+                end
+              end
+            end
+          end
+
+          -- ===== 90 (only if turning TOWARDS runway, closing, and position gate) =====
+          if s.at180 and (not s.at90) then
+            local hdgDiff90 = math.abs(_degDiff(trk, (rwyHdg + 90) % 360))
+            local turnOk = (math.abs(turnRate) >= ATC_AI.academy.base.minTurnRateDeg)
+
+            local dirOk = true
+            if s.patternSide == "L" then
+              dirOk = (turnRate < 0)
+            elseif s.patternSide == "R" then
+              dirOk = (turnRate > 0)
+            end
+
+            local posMinNM = ATC_AI.academy.downwind.minNM * ATC_AI.academy.base.posMinFactor
+            local posMaxNM = ATC_AI.academy.downwind.maxNM * ATC_AI.academy.base.posMaxFactor
+            local pos90Ok = (latNM >= posMinNM and latNM <= posMaxNM)
+
+            if hdgDiff90 <= ATC_AI.academy.base.hdg90_tol and turnOk and dirOk and closing and pos90Ok then
+              s.at90 = true
+              _throttledFeedback(u, name, string.format("90 (lat %.2fNM)", latNM), 3)
+
+              -- Bank penalty at 90 (once per recovery)
+              if s.recoveryArmed and (not s.bankPenalizedThisRecovery) then
+                local bank = _bankDeg(u)
+                local maxB = ATC_AI.academy.bankRules.maxBank90
+                if bank > maxB then
+                  local over = bank - maxB
+                  local steps = math.floor(over / 5) + 1
+                  local pen = math.min(steps * ATC_AI.academy.bankRules.penaltyPer5deg, ATC_AI.academy.bankRules.maxPenalty)
+                  s.score = math.max(0, s.score - pen)
+                  s.bankPenalizedThisRecovery = true
+                  _addNote(s, string.format("Bank >%d° at 90 (-%d)", maxB, pen))
+                  msgToUnit(u, string.format("[ACADEMY] Penalty: BANK %.0f° at 90 (-%d)", bank, pen), 7)
+                end
+              end
+
+              -- Flat pattern checkpoint ONLY at 90 (once per recovery)
+              if s.recoveryArmed and (not s.flatPenalizedThisRecovery) then
+                local max90 = ATC_AI.academy.flatPatternRules.at90_maxAGL_ft
+                if agl_ft > max90 then
+                  local diff = agl_ft - max90
+                  local steps = math.floor(diff / 100) + 1
+                  local pen = math.min(steps * ATC_AI.academy.flatPatternRules.penaltyPer100ft,
+                                       ATC_AI.academy.flatPatternRules.maxPenalty)
+                  s.score = math.max(0, s.score - pen)
+                  s.flatPenalizedThisRecovery = true
+                  _addNote(s, string.format("Flat pattern @90 (%.0fft, -%d)", agl_ft, pen))
+                  msgToUnit(u, string.format("[ACADEMY] Penalty: FLAT @90 (%.0fft, -%d)", agl_ft, pen), 7)
+                end
+              end
+            end
+          end
+
+          -- Overshoot centerline penalty in final phase (once per recovery)
+          if s.recoveryArmed and s.at90 and (not s.overshootPenalizedThisRecovery) then
+            local os = ATC_AI.academy.finalPenalties.overshootM
+            local osBig = ATC_AI.academy.finalPenalties.overshootBigM
+            if latAbsM > os then
+              local pen = ATC_AI.academy.finalPenalties.overshootPenalty
+              if latAbsM > osBig then pen = ATC_AI.academy.finalPenalties.overshootBigPenalty end
+              s.score = math.max(0, s.score - pen)
+              s.overshootPenalizedThisRecovery = true
+              _addNote(s, string.format("Final overshoot %.0fm (-%d)", latAbsM, pen))
+              msgToUnit(u, string.format("[ACADEMY] Penalty: FINAL OVERSHOOT %.0fm (-%d)", latAbsM, pen), 7)
+            end
+          end
+
+          -- FINAL stable (geometric)
+          local alignedF = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.final.hdg_tol)
+          local centered = (latAbsM <= ATC_AI.academy.final.centerlineMaxM)
+
+          if s.at90 and alignedF and centered and (agl_ft <= ATC_AI.academy.final.agl_max) then
+            s.finalStableSeconds = s.finalStableSeconds + 1
+            if (not s.finalStable) and s.finalStableSeconds >= ATC_AI.academy.final.minSecondsStable then
+              s.finalStable = true
+              s.score = s.score + ATC_AI.academy.weights.final
+              _throttledFeedback(u, name, "Final stable", 2)
+            end
+          else
+            if not s.finalStable then
+              s.finalStableSeconds = 0
+            end
           end
         end
       end
-
-      -- ===== Downwind spacing + speed gate (200-250) =====
-      if s.breakDone and (not s.downwindOK)
-         and distNM >= ATC_AI.academy.downwind.minNM
-         and distNM <= ATC_AI.academy.downwind.maxNM then
-
-        if gs_kts >= ATC_AI.academy.downwindSpeed.min and gs_kts <= ATC_AI.academy.downwindSpeed.max then
-          s.downwindOK = true
-          s.score = s.score + ATC_AI.academy.weights.downwind
-          _throttledFeedback(u, name, string.format("Downwind OK (%.0f kt)", gs_kts), 3)
-        else
-          _throttledFeedback(u, name, string.format("Downwind SPEED %.0f kt (need %d–%d)", gs_kts,
-            ATC_AI.academy.downwindSpeed.min, ATC_AI.academy.downwindSpeed.max), 4)
-          if not s._noteDownwindSpeed then
-            s._noteDownwindSpeed = true
-            _addNote(s, "Downwind speed out of band")
-          end
-        end
-      end
-
-      -- ===== Final stability =====
-      local onFinal = (_degDiff(trk, rwyHdg) <= ATC_AI.academy.final.hdg_tol) and (agl_ft <= ATC_AI.academy.final.agl_max)
-      if onFinal then
-        s.finalStableSeconds = s.finalStableSeconds + 1
-        if (not s.finalStable) and s.finalStableSeconds >= ATC_AI.academy.final.minSecondsStable then
-          s.finalStable = true
-          s.score = s.score + ATC_AI.academy.weights.final
-          _throttledFeedback(u, name, "Final stable", 2)
-        end
-      else
-        if not s.finalStable then
-          if s.finalStableSeconds > 0 then
-            s.finalStableSeconds = 0
-            _throttledFeedback(u, name, "Final UNSTABLE (align/alt)", 4)
-          end
-        end
-      end
-
-      ::continue::
     end
   end
 
