@@ -1,5 +1,3 @@
-local util = require("awacs.util")
-
 local M = {}
 
 function M.update(state, snapshot, config, now)
@@ -37,3 +35,4 @@ function M.update(state, snapshot, config, now)
 end
 
 return M
+

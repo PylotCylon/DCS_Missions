@@ -4,9 +4,8 @@ local function default_log(text)
     print(text)
 end
 
-function M.send(messages, adapters, config, now)
+function M.send(messages, adapters, _config, _now)
     adapters = adapters or {}
-    config = config or {}
     local log_fn = adapters.log or default_log
 
     for _, msg in ipairs(messages or {}) do

@@ -1,5 +1,3 @@
-local util = require("awacs.util")
-
 local M = {}
 
 local function fmt_bearing(deg)
@@ -49,3 +47,4 @@ function M.build_braa(call, config)
 end
 
 return M
+

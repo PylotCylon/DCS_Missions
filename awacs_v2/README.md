@@ -59,6 +59,130 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\python.exe -m backend.validate_contract
 ```
 
+## Version de Lua y lint (DCS)
+
+- Este modulo debe mantenerse compatible con el runtime Lua embebido de DCS (ecosistema Lua 5.1/LuaJIT).
+- No se debe migrar la sintaxis a Lua 5.4+ para scripts de mision DCS.
+
+Configuracion local incluida en este directorio:
+- `.luarc.json` (Lua Language Server).
+- `.luacheckrc` (luacheck).
+- `run_luacheck.ps1` (runner estable para Windows).
+
+### Instalacion de luacheck en Windows (paso a paso)
+
+1. Instalar Lua (incluye `lua` y `luarocks`):
+
+```powershell
+winget install --id DEVCOM.Lua -e --accept-package-agreements --accept-source-agreements
+```
+
+2. Instalar compilador MinGW requerido por dependencias nativas (ej: `luafilesystem`):
+
+```powershell
+winget install --id MartinStorsjo.LLVM-MinGW.UCRT -e --accept-package-agreements --accept-source-agreements
+```
+
+3. Cerrar y abrir PowerShell.
+
+4. Verificar herramientas base:
+
+```powershell
+lua -v
+luarocks --version
+x86_64-w64-mingw32-gcc --version
+```
+
+5. Instalar `luacheck`:
+
+```powershell
+luarocks install luacheck
+```
+
+6. Verificar lint sobre AWACS:
+
+```powershell
+cd C:\repos\DCS_Missions\awacs_v2
+.\run_luacheck.ps1
+```
+
+### Uso recomendado en este repo
+
+Desde `C:\repos\DCS_Missions\awacs_v2`:
+
+```powershell
+.\run_luacheck.ps1
+```
+
+Opcional (target especifico):
+
+```powershell
+.\run_luacheck.ps1 -Target scripts/awacs/adapters
+```
+
+Tarea VS Code disponible:
+- `Lua: luacheck AWACS scripts` (archivo `.vscode/tasks.json`).
+
+### Troubleshooting de instalacion
+
+Si algun comando no se reconoce:
+
+```powershell
+where.exe lua
+where.exe luarocks
+where.exe x86_64-w64-mingw32-gcc
+```
+
+Si `luarocks install luacheck` falla por compilacion, confirma que el compilador este instalado y abre una nueva shell:
+
+```powershell
+x86_64-w64-mingw32-gcc --version
+```
+
+Si `run_luacheck.ps1` indica que falta `luacheck`, reinstala:
+
+```powershell
+luarocks install luacheck
+```
+
+## Integracion recomendada en mision (MOOSE preferente)
+
+- Opcion elegida: `MOOSE`.
+- Motivo: facilita tracking de grupos y eventos sin acoplar el nucleo tactico a una libreria.
+- Nucleo tactico agnostico: `scripts/awacs/awacs_agent.lua` + modulos de `perception/tracking/threat_eval/comms/message_builder`.
+- Adaptador MOOSE: `scripts/awacs/adapters/moose_adapter.lua`.
+- Bootstrap de mision: `scripts/awacs/bootstrap_moose.lua`.
+
+Ejemplo minimo:
+
+```lua
+local MooseBootstrap = require("awacs.bootstrap_moose")
+MooseBootstrap.start({
+    adapter = {
+        package_group_names = { "COLT11" },
+        hostile_group_prefixes = { "RED_CAP_" },
+    }
+})
+```
+
+
+Perfiles disponibles:
+- `tactical_realistic` (default).
+- `academy_basic` (mayor cadencia y ayudas para entrenamiento).
+- Definidos en `scripts/awacs/profile_presets.lua`.
+
+Ejemplo academy_basic:
+
+```lua
+local MooseBootstrap = require("awacs.bootstrap_moose")
+MooseBootstrap.start({
+    profile = "academy_basic",
+    adapter = {
+        package_group_prefixes = { "BLUE_ACA_" },
+        hostile_group_prefixes = { "RED_ACA_" },
+    }
+})
+```
 ---
 ## PropÃ³sito
 
@@ -207,21 +331,28 @@ Ejemplos:
 
 ## Estructura sugerida
 
-Ejemplo de organizaciÃ³n mÃ­nima:
+Ejemplo de organizacion minima:
 
 ```text
 scripts/
-â””â”€â”€ awacs/
-    â”œâ”€â”€ AGENTS.md
-    â”œâ”€â”€ README.md
-    â”œâ”€â”€ awacs_agent.lua
-    â”œâ”€â”€ awacs_config.lua
-    â”œâ”€â”€ perception.lua
-    â”œâ”€â”€ tracking.lua
-    â”œâ”€â”€ threat_eval.lua
-    â”œâ”€â”€ comms.lua
-    â”œâ”€â”€ message_builder.lua
-    â””â”€â”€ output.lua
-
+|-- awacs/
+|   |-- AGENTS.md
+|   |-- README.md
+|   |-- awacs_agent.lua
+|   |-- awacs_config.lua
+|   |-- profile_presets.lua
+|   |-- perception.lua
+|   |-- tracking.lua
+|   |-- threat_eval.lua
+|   |-- comms.lua
+|   |-- message_builder.lua
+|   |-- output.lua
+|   |-- bootstrap_moose.lua
+|   |-- adapters/
+|   |   `-- moose_adapter.lua
+|   `-- examples/
+|       |-- moose_start_example.lua
+|       `-- moose_start_academy_basic.lua
+```
 
 

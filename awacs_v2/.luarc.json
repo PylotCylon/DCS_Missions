@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+  "Lua.runtime.version": "Lua 5.1",
+  "Lua.runtime.nonstandardSymbol": ["+=", "-=", "*=", "/="],
+  "Lua.diagnostics.globals": [
+    "_G",
+    "trigger",
+    "timer",
+    "coalition",
+    "Group",
+    "Unit",
+    "world",
+    "env",
+    "mist",
+    "MESSAGE",
+    "GROUP",
+    "SET_GROUP",
+    "BASE",
+    "SCHEDULER",
+    "UTILS"
+  ],
+  "Lua.workspace.library": [
+    "${workspaceFolder}/scripts"
+  ],
+  "Lua.workspace.checkThirdParty": false,
+  "Lua.telemetry.enable": false,
+  "Lua.hint.enable": true,
+  "Lua.format.enable": false
+}

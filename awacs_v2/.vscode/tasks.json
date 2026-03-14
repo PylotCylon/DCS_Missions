@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Lua: luacheck AWACS scripts",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "run_luacheck.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/awacs_v2"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -62,4 +62,12 @@ function M.merge(user_config)
     return deep_merge(M.defaults, user_config or {})
 end
 
+function M.merge_many(configs)
+    local merged = deep_copy(M.defaults)
+    for _, cfg in ipairs(configs or {}) do
+        merged = deep_merge(merged, cfg or {})
+    end
+    return merged
+end
+
 return M
