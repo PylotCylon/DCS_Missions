@@ -20,6 +20,7 @@ function AwacsAgent.new(opts)
         package_last_call = {},
         track_last_call = {},
         last_global_call = 0,
+        last_announced = {},
     }
     return self
 end
@@ -30,6 +31,7 @@ function AwacsAgent:reset()
         package_last_call = {},
         track_last_call = {},
         last_global_call = 0,
+        last_announced = {},
     }
 end
 

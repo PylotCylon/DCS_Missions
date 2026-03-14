@@ -12,6 +12,11 @@ M.profiles = {
             global_cooldown_sec = 8,
             track_repeat_sec = 30,
             max_calls_per_tick = 2,
+            duplicate_suppression_sec = 20,
+            min_bearing_delta_deg = 12,
+            min_range_delta_nm = 6,
+            min_altitude_delta_ft = 2000,
+            reannounce_on_aspect_change = true,
         },
         outputs = {
             prefix = "[AWACS]",
@@ -40,6 +45,11 @@ M.profiles = {
             global_cooldown_sec = 4,
             track_repeat_sec = 12,
             max_calls_per_tick = 3,
+            duplicate_suppression_sec = 10,
+            min_bearing_delta_deg = 8,
+            min_range_delta_nm = 4,
+            min_altitude_delta_ft = 1200,
+            reannounce_on_aspect_change = true,
         },
         outputs = {
             prefix = "[AWACS ACADEMY]",
