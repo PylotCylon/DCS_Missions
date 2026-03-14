@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ParsedIntent",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "frequency",
+    "coalition",
+    "normalized_text",
+    "intent"
+  ],
+  "properties": {
+    "timestamp": { "type": "string" },
+    "frequency": { "type": "number" },
+    "coalition": { "type": "string", "enum": ["blue", "red", "neutral"] },
+    "addressee": { "type": ["string", "null"] },
+    "caller": { "type": ["string", "null"] },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "check_in",
+        "check_out",
+        "request_picture",
+        "declare",
+        "vector_nearest_air_threat",
+        "vector_tanker",
+        "vector_divert_field",
+        "vector_home_plate"
+      ]
+    },
+    "raw_transcript": { "type": ["string", "null"] },
+    "normalized_text": { "type": "string" },
+    "confidence": { "type": ["number", "null"] }
+  }
+}

@@ -1,0 +1,12 @@
+airfields:
+  - id: "senaki"
+    name: "Senaki-Kolkhi"
+    tacan: "31X"
+    lat: 42.240
+    lon: 42.048
+
+  - id: "kutaisi"
+    name: "Kutaisi"
+    tacan: "44X"
+    lat: 42.176
+    lon: 42.482

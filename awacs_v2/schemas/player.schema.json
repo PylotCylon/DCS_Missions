@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Player",
+  "type": "object",
+  "required": [
+    "player_id",
+    "callsign",
+    "coalition",
+    "home_plate",
+    "checked_in"
+  ],
+  "properties": {
+    "player_id": { "type": "string" },
+    "callsign": { "type": "string" },
+    "coalition": { "type": "string", "enum": ["blue", "red", "neutral"] },
+    "slot": { "type": ["string", "null"] },
+    "group_name": { "type": ["string", "null"] },
+    "package": { "type": ["string", "null"] },
+    "home_plate": { "type": "string" },
+    "checked_in": { "type": "boolean" },
+    "last_frequency": { "type": ["number", "null"] }
+  }
+}

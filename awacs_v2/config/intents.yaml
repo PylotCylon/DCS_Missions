@@ -1,0 +1,45 @@
+version: 1
+
+intents:
+  - id: check_in
+    priority: 1
+    phrases:
+      - "check in"
+      - "check-in"
+
+  - id: check_out
+    priority: 1
+    phrases:
+      - "check out"
+      - "check-out"
+
+  - id: request_picture
+    priority: 1
+    phrases:
+      - "request picture"
+      - "picture"
+
+  - id: declare
+    priority: 1
+    phrases:
+      - "declare"
+
+  - id: vector_nearest_air_threat
+    priority: 1
+    phrases:
+      - "vector to nearest air threat"
+
+  - id: vector_tanker
+    priority: 1
+    phrases:
+      - "vector to tanker"
+
+  - id: vector_divert_field
+    priority: 1
+    phrases:
+      - "vector to divert field"
+
+  - id: vector_home_plate
+    priority: 1
+    phrases:
+      - "vector to home plate"

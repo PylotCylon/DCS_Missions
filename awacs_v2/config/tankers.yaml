@@ -1,0 +1,6 @@
+tankers:
+  - name: "texaco"
+    tacan: "31Y"
+    lat: 42.100
+    lon: 41.900
+    alt_ft: 22000

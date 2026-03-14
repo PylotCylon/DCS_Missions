@@ -1,0 +1,26 @@
+version: 1
+
+awacs_callsigns:
+  - magic
+  - darkstar
+  - wizard
+  - focus
+  - sentry
+  - disco
+  - chalice
+
+response_style:
+  brevity_only: true
+  max_sentences_picture: 3
+  max_sentences_other: 1
+
+declare_rules:
+  hostile_if_coalition: red
+  friendly_if_coalition: blue
+  unknown_if_stale_seconds_gt: 15
+  clean_if_no_valid_tracks: true
+
+track_filters:
+  max_stale_seconds: 10
+  min_air_speed_knots: 80
+  only_air_tracks: true

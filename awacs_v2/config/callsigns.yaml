@@ -1,0 +1,8 @@
+players:
+  - callsign: "colt 1 1"
+    home_plate: "senaki"
+    package: "sweep_north"
+
+  - callsign: "pontiac 2 1"
+    home_plate: "kutaisi"
+    package: "strike_east"

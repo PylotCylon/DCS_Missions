@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Track",
+  "type": "object",
+  "required": [
+    "track_id",
+    "coalition",
+    "kind",
+    "lat",
+    "lon",
+    "alt_ft",
+    "heading_deg",
+    "speed_kt",
+    "last_seen"
+  ],
+  "properties": {
+    "track_id": { "type": "string" },
+    "coalition": { "type": "string", "enum": ["blue", "red", "neutral"] },
+    "kind": { "type": "string", "enum": ["air", "ground", "naval", "unknown"] },
+    "lat": { "type": "number" },
+    "lon": { "type": "number" },
+    "alt_ft": { "type": "number" },
+    "heading_deg": { "type": "number" },
+    "speed_kt": { "type": "number" },
+    "callsign": { "type": ["string", "null"] },
+    "platform": { "type": ["string", "null"] },
+    "last_seen": { "type": "string" }
+  }
+}
