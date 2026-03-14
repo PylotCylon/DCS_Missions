@@ -26,8 +26,16 @@ Antes de ejecutar validaciones o desarrollar el backend AWACS, completa estos pa
 
 Archivos de referencia del setup:
 - `requirements.txt`
+- `requirements-dev.txt`
 - `.gitignore`
 - `setup_env.ps1`
+
+Comprobacion automatica recomendada:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -q
+```
 
 ### Troubleshooting rapido
 
@@ -50,6 +58,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```powershell
 .\.venv\Scripts\python.exe -m backend.validate_contract
 ```
+
 ---
 ## PropÃ³sito
 

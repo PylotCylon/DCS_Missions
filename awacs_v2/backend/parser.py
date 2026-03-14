@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from . import config_loader
 from .callsign_resolver import build_resolver
@@ -39,12 +39,19 @@ class Parser:
 
     def _ts(self, value: Any) -> str:
         if isinstance(value, dt.datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=dt.timezone.utc)
+            else:
+                value = value.astimezone(dt.timezone.utc)
             return value.strftime(ISO_FORMAT)
+
         if isinstance(value, (int, float)):
-            return dt.datetime.utcfromtimestamp(value).strftime(ISO_FORMAT)
+            return dt.datetime.fromtimestamp(value, tz=dt.timezone.utc).strftime(ISO_FORMAT)
+
         if isinstance(value, str):
             return value
-        return dt.datetime.utcnow().strftime(ISO_FORMAT)
+
+        return dt.datetime.now(dt.timezone.utc).strftime(ISO_FORMAT)
 
 
 def default_parser() -> Parser:
