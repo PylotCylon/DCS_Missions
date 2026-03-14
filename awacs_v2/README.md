@@ -183,6 +183,99 @@ MooseBootstrap.start({
     }
 })
 ```
+
+## Guia operativa: configurar, usar y probar
+
+### 1) Pre-check local (recomendado)
+
+Desde `C:\repos\DCS_Missions\awacs_v2`:
+
+```powershell
+.\run_luacheck.ps1
+```
+
+Debe terminar con `0 warnings / 0 errors`.
+
+### 2) Carga en mision DCS (orden)
+
+1. Carga MOOSE primero (`MOOSE.lua`).
+2. Asegura `package.path` para resolver `require("awacs....")`.
+3. Arranca AWACS con `require("awacs.bootstrap_moose")`.
+
+Snippet de ejemplo para `DO SCRIPT` (ajusta ruta a tu equipo/servidor):
+
+```lua
+package.path = package.path
+  .. ";C:\\repos\\DCS_Missions\\awacs_v2\\scripts\\?.lua"
+  .. ";C:\\repos\\DCS_Missions\\awacs_v2\\scripts\\?\\init.lua"
+
+local MooseBootstrap = require("awacs.bootstrap_moose")
+local instance, err = MooseBootstrap.start({
+    profile = "academy_basic",
+    adapter = {
+        package_group_prefixes = { "BLUE_ACA_" },
+        hostile_group_prefixes = { "RED_ACA_" },
+        output_coalition = "blue",
+        message_duration_sec = 8,
+    },
+    runtime = {
+        interval_sec = 8,
+        start_delay_sec = 5,
+    }
+})
+
+if not instance then
+    if env and env.error then env.error("AWACS start failed: " .. tostring(err)) end
+end
+```
+
+### 3) Que se puede configurar
+
+- `profile`: `tactical_realistic` o `academy_basic` (ver `scripts/awacs/profile_presets.lua`).
+- `config` (override por mision): cualquier campo de `scripts/awacs/awacs_config.lua`.
+- `adapter.package_group_names`: lista exacta de grupos blue monitorizados.
+- `adapter.package_group_prefixes`: prefijos de grupos blue (descubrimiento dinamico con MOOSE).
+- `adapter.hostile_group_names`: lista exacta de grupos hostiles.
+- `adapter.hostile_group_prefixes`: prefijos hostiles.
+- `runtime.interval_sec`: cadencia de evaluacion del agente.
+- `runtime.start_delay_sec`: retardo inicial antes del primer tick.
+
+Parametros comms clave (anti-spam):
+- `package_cooldown_sec`, `global_cooldown_sec`, `track_repeat_sec`.
+- `duplicate_suppression_sec`.
+- `min_bearing_delta_deg`, `min_range_delta_nm`, `min_altitude_delta_ft`.
+- `reannounce_on_aspect_change`.
+
+### 4) Flujo de uso en mision
+
+1. Arranca la mision y valida en log que aparece `AWACS started with MOOSE adapter (...)`.
+2. Confirma que hay paquetes blue y hostiles detectables por nombre/prefijo.
+3. Observa mensajes BRAA en coalicion blue (salida `MESSAGE`/`trigger.action`).
+
+### 5) Plan de pruebas recomendado
+
+Prueba A - Smoke test
+- Sin hostiles en rango: no debe spamear mensajes.
+
+Prueba B - Primera deteccion
+- Introduce un grupo hostil en rango: debe emitir BRAA priorizado.
+
+Prueba C - Supresion de duplicados
+- Mantener geometria casi igual: no debe repetir BRAA dentro de ventana.
+
+Prueba D - Reanuncio por cambio significativo
+- Cambiar bearing/range/alt o aspect por encima de umbral: debe reanunciar.
+
+Prueba E - Perfil
+- `academy_basic` debe hablar mas (cooldowns menores) que `tactical_realistic`.
+
+### 6) Troubleshooting rapido
+
+- Si no arranca: revisa `package.path` y orden de carga (MOOSE antes de bootstrap).
+- Si no detecta grupos: revisa nombres/prefijos exactos en Mission Editor.
+- Si habla demasiado: sube cooldowns/umbrales en `config.comms`.
+- Si no habla nunca: baja `min_score` en `config.threat` y revisa rangos.
+
 ---
 ## PropÃ³sito
 
