@@ -129,6 +129,7 @@ No debe:
 ## Arquitectura esperada
 
 La lÃ³gica del agente deberÃ­a separarse en responsabilidades claras.
+La implementación de este módulo puede apoyarse en MOOSE como framework principal y en MIST como librería auxiliar cuando aporte simplicidad real. La lógica táctica del agente debe permanecer lo bastante desacoplada como para no quedar totalmente atada a una sola librería.
 
 ### 1. Perception
 Se encarga de leer el estado relevante del entorno DCS.
